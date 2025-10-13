@@ -62,11 +62,21 @@ try:
         default_categories = ["Bangla", "Hindi", "English", "18+ Adult", "Korean", "Dual Audio", "Bangla Dubbed", "Hindi Dubbed", "Indonesian", "Horror", "Action", "Thriller", "Anime", "Romance", "Trending"]
         categories_collection.insert_many([{"name": cat} for cat in default_categories])
 
-    movies.create_index([("title", "text")])
-    print("SUCCESS: MongoDB text index checked/created.")
+    # [<<<<< সমাধান এখানেই >>>>>]
+    # টেক্সট ইন্ডেক্সের পরিবর্তে সাধারণ ইন্ডেক্স ব্যবহার করা হচ্ছে
+    movies.create_index("title")
+    movies.create_index("type")
+    movies.create_index("categories")
+    movies.create_index("updated_at")
+    movies.create_index("tmdb_id")
+    movies.create_index("ott_platform")
+    categories_collection.create_index("name", unique=True)
+    ott_collection.create_index("name", unique=True)
+    requests_collection.create_index("status")
+    print("SUCCESS: MongoDB indexes checked/created.")
 
 except Exception as e:
-    print(f"FATAL: Error connecting to MongoDB: {e}.")
+    print(f"FATAL: Error during DB setup: {e}.")
     if 'vercel' not in os.environ.get('SERVER_SOFTWARE', '').lower():
         sys.exit(1)
 
@@ -140,7 +150,6 @@ def inject_globals():
     all_ott = list(ott_collection.find().sort("name", 1))
     icons = {"Bangla": "fa-film", "Hindi": "fa-film", "English": "fa-film", "18+ Adult": "fa-exclamation-circle", "Korean": "fa-tv", "Dual Audio": "fa-headphones", "Bangla Dubbed": "fa-microphone-alt", "Hindi Dubbed": "fa-microphone-alt", "Horror": "fa-ghost", "Action": "fa-bolt", "Thriller": "fa-knife-kitchen", "Anime": "fa-dragon", "Romance": "fa-heart", "Trending": "fa-fire", "ALL MOVIES": "fa-layer-group", "WEB SERIES & TV SHOWS": "fa-tv-alt", "HOME": "fa-home"}
     return dict(website_name=WEBSITE_NAME, ad_settings=ad_settings, predefined_categories=all_categories, quote=quote, datetime=datetime, category_icons=icons, all_ott_platforms=all_ott, developer_telegram_id=DEVELOPER_TELEGRAM_ID)
-
 
 # =========================================================================================
 # === [START] HTML TEMPLATES ==============================================================
@@ -486,7 +495,7 @@ index_html = """
 
     <section class="home-search-section container">
         <form action="{{ url_for('home') }}" method="get" class="home-search-form">
-            <input type="text" name="q" class="home-search-input" placeholder="Search for your favorite content...">
+            <input type="text" name="q" class="home-search-input" placeholder="সার্চ করে খুঁজে নিন আপনার পছন্দের ...">
             <button type="submit" class="home-search-button" aria-label="Search">
                 <i class="fas fa-search"></i>
             </button>
@@ -583,7 +592,7 @@ index_html = """
   {% endif %}
 </main>
 <footer class="main-footer">
-    <p>&copy; {{ datetime.now().year }} {{ website_name }}. All Rights Reserved.</p>
+    <p>&copy; 2024 {{ website_name }}. All Rights Reserved.</p>
 </footer>
 <nav class="bottom-nav">
   <a href="{{ url_for('home') }}" class="nav-item active"><i class="fas fa-home"></i><span>Home</span></a>
@@ -594,13 +603,55 @@ index_html = """
 <div id="search-overlay" class="search-overlay">
   <button id="close-search-btn" class="close-search-btn">&times;</button>
   <div class="search-container">
-    <input type="text" id="search-input-live" placeholder="Type to search..." autocomplete="off">
+    <input type="text" id="search-input-live" placeholder="Type to search for movies or series..." autocomplete="off">
     <div id="search-results-live"><p style="color: #555; text-align: center;">Start typing to see results</p></div>
   </div>
 </div>
 <script src="https://unpkg.com/swiper/swiper-bundle.min.js"></script>
 <script>
-    // All JavaScript from your original index_html
+    const header = document.querySelector('.main-header');
+    window.addEventListener('scroll', () => { window.scrollY > 10 ? header.classList.add('scrolled') : header.classList.remove('scrolled'); });
+    const menuToggle = document.querySelector('.menu-toggle');
+    const mobileMenu = document.querySelector('.mobile-nav-menu');
+    const closeBtn = document.querySelector('.close-btn');
+    if (menuToggle && mobileMenu && closeBtn) {
+        menuToggle.addEventListener('click', () => { mobileMenu.classList.add('active'); });
+        closeBtn.addEventListener('click', () => { mobileMenu.classList.remove('active'); });
+        document.querySelectorAll('.mobile-links a').forEach(link => { link.addEventListener('click', () => { mobileMenu.classList.remove('active'); }); });
+    }
+    const liveSearchBtn = document.getElementById('live-search-btn');
+    const searchOverlay = document.getElementById('search-overlay');
+    const closeSearchBtn = document.getElementById('close-search-btn');
+    const searchInputLive = document.getElementById('search-input-live');
+    const searchResultsLive = document.getElementById('search-results-live');
+    let debounceTimer;
+    liveSearchBtn.addEventListener('click', () => { searchOverlay.classList.add('active'); searchInputLive.focus(); });
+    closeSearchBtn.addEventListener('click', () => { searchOverlay.classList.remove('active'); });
+    searchInputLive.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            const query = searchInputLive.value.trim();
+            if (query.length > 1) {
+                searchResultsLive.innerHTML = '<p style="color: #555; text-align: center;">Searching...</p>';
+                fetch(`/api/search?q=${encodeURIComponent(query)}`).then(response => response.json()).then(data => {
+                    let html = '';
+                    if (data.length > 0) {
+                        data.forEach(item => { html += `<a href="/movie/${item._id}" class="search-result-item"><img src="${item.poster}" alt="${item.title}"><span>${item.title}</span></a>`; });
+                    } else { html = '<p style="color: #555; text-align: center;">No results found.</p>'; }
+                    searchResultsLive.innerHTML = html;
+                });
+            } else { searchResultsLive.innerHTML = '<p style="color: #555; text-align: center;">Start typing to see results</p>'; }
+        }, 300);
+    });
+    new Swiper('.hero-slider', {
+        loop: true, autoplay: { delay: 5000, disableOnInteraction: false },
+        pagination: { el: '.swiper-pagination', clickable: true },
+        effect: 'fade', fadeEffect: { crossFade: true },
+    });
+    new Swiper('.platform-slider', {
+        slidesPerView: 'auto',
+        spaceBetween: 20,
+    });
 </script>
 {{ ad_settings.ad_footer | safe }}
 </body></html>
@@ -794,15 +845,235 @@ document.addEventListener('DOMContentLoaded', function () {
 </body></html>
 """
 
-# ... All other templates like admin_html, edit_html, etc. from your original code
-# Just ensure the labels in admin/edit forms are changed to "Direct Stream Link"
+admin_html = """
+<!-- আপনার মূল কোডের admin_html টেমপ্লেটটি এখানে পেস্ট করুন -->
+<!-- শুধু Movie/Series Links সেকশনের লেবেলগুলো "Direct Stream Link" করে দিন -->
+<!-- যেমন: <label>480p Direct Stream Link:</label> -->
+"""
+
+edit_html = """
+<!-- আপনার মূল কোডের edit_html টেমপ্লেটটি এখানে পেস্ট করুন -->
+<!-- এখানেও Movie/Series Links এর লেবেলগুলো "Direct Stream Link" করে দিন -->
+"""
+
+wait_page_html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Generating Link... - {{ website_name }}</title>
+    <link rel="icon" href="https://img.icons8.com/fluency/48/cinema-.png" type="image/png">
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap" rel="stylesheet">
+    {{ ad_settings.ad_header | safe }}
+    <style>
+        :root {--primary-color: #E50914; --bg-color: #000000; --text-light: #ffffff; --text-dark: #a0a0a0;}
+        body { font-family: 'Poppins', sans-serif; background-color: var(--bg-color); color: var(--text-light); display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; text-align: center; margin: 0; padding: 20px;}
+        .wait-container { background-color: #1a1a1a; padding: 40px; border-radius: 12px; max-width: 500px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { font-size: 1.8rem; color: var(--primary-color); margin-bottom: 20px; }
+        p { color: var(--text-dark); margin-bottom: 30px; font-size: 1rem; }
+        .timer { font-size: 2.5rem; font-weight: 700; color: var(--text-light); margin-bottom: 30px; }
+        .get-link-btn { display: inline-block; text-decoration: none; color: white; font-weight: 600; cursor: pointer; border: none; padding: 12px 30px; border-radius: 50px; font-size: 1rem; background-color: #555; transition: background-color 0.2s; }
+        .get-link-btn.ready { background-color: var(--primary-color); }
+        .ad-container { margin: 30px auto 0; width: 100%; max-width: 100%; display: flex; justify-content: center; align-items: center; overflow: hidden; min-height: 50px; text-align: center; }
+        .ad-container > * { max-width: 100% !important; }
+    </style>
+</head>
+<body>
+    {{ ad_settings.ad_body_top | safe }}
+    <div class="wait-container">
+        <h1>Please Wait</h1>
+        <p>Your download link is being generated. You will be redirected automatically.</p>
+        <div class="timer">Please wait <span id="countdown">5</span> seconds...</div>
+        <a id="get-link-btn" class="get-link-btn" href="#">Generating Link...</a>
+        {% if ad_settings.ad_wait_page %}<div class="ad-container">{{ ad_settings.ad_wait_page | safe }}</div>{% endif %}
+    </div>
+    <script>
+        (function() {
+            let timeLeft = 5;
+            const countdownElement = document.getElementById('countdown');
+            const linkButton = document.getElementById('get-link-btn');
+            const targetUrl = "{{ target_url | safe }}";
+            const timer = setInterval(() => {
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    countdownElement.parentElement.textContent = "Your link is ready!";
+                    linkButton.classList.add('ready');
+                    linkButton.textContent = 'Click Here to Proceed';
+                    linkButton.href = targetUrl;
+                    window.location.href = targetUrl;
+                } else {
+                    countdownElement.textContent = timeLeft;
+                }
+                timeLeft--;
+            }, 1000);
+        })();
+    </script>
+    {{ ad_settings.ad_footer | safe }}
+</body>
+</html>
+"""
+
+request_html = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Request Content - {{ website_name }}</title>
+    <link rel="icon" href="https://img.icons8.com/fluency/48/cinema-.png" type="image/png">
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.0/css/all.min.css">
+    {{ ad_settings.ad_header | safe }}
+    <style>
+        :root { --primary-color: #E50914; --bg-color: #000000; --card-bg: #1a1a1a; --text-light: #ffffff; --text-dark: #a0a0a0; }
+        body { font-family: 'Poppins', sans-serif; background-color: var(--bg-color); color: var(--text-light); display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
+        .container { max-width: 600px; width: 100%; padding: 0 15px; }
+        .back-link {
+            align-self: flex-start;
+            margin-bottom: 20px;
+            color: var(--text-dark);
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 8px 15px;
+            background-color: var(--card-bg);
+            border-radius: 50px;
+            transition: all 0.2s ease;
+        }
+        .back-link:hover {
+            background-color: #333;
+            color: var(--text-light);
+        }
+        .back-link i {
+            margin-right: 8px;
+        }
+        .request-container { background-color: var(--card-bg); padding: 30px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { font-size: 2rem; color: var(--primary-color); margin-bottom: 10px; text-align: center; }
+        p { text-align: center; color: var(--text-dark); margin-bottom: 30px; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 8px; font-weight: 500; }
+        input, textarea { width: 100%; padding: 12px; border-radius: 5px; border: 1px solid #333; font-size: 1rem; background: #222; color: var(--text-light); box-sizing: border-box; }
+        textarea { resize: vertical; min-height: 80px; }
+        .btn-submit { display: block; width: 100%; text-decoration: none; color: white; font-weight: 600; cursor: pointer; border: none; padding: 14px; border-radius: 5px; font-size: 1.1rem; background-color: var(--primary-color); transition: background-color 0.2s; }
+        .btn-submit:hover { background-color: #B20710; }
+        .flash-message { padding: 15px; border-radius: 5px; margin-bottom: 20px; text-align: center; }
+        .flash-success { background-color: #28a745; color: white; }
+        .flash-error { background-color: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    {{ ad_settings.ad_body_top | safe }}
+    <div class="container">
+        <a href="#" onclick="window.history.back(); return false;" class="back-link">
+            <i class="fas fa-arrow-left"></i> Go Back
+        </a>
+        <div class="request-container">
+            <h1>Request Content</h1>
+            <p>Can't find what you're looking for? Let us know!</p>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="flash-message flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+            <form method="post">
+                <div class="form-group">
+                    <label for="content_name">Movie/Series Name</label>
+                    <input type="text" id="content_name" name="content_name" required>
+                </div>
+                <div class="form-group">
+                    <label for="extra_info">Additional Information (Optional)</label>
+                    <textarea id="extra_info" name="extra_info" placeholder="e.g., Release year, language, specific season..."></textarea>
+                </div>
+                <button type="submit" class="btn-submit">Submit Request</button>
+            </form>
+        </div>
+    </div>
+    {{ ad_settings.ad_footer | safe }}
+</body>
+</html>
+"""
 
 # =========================================================================================
 # === PYTHON FUNCTIONS & FLASK ROUTES (Final Version) =====================================
 # =========================================================================================
 
-# All other functions (get_tmdb_details, Pagination, routes for home, category, etc.)
-# are the same as your original code. The only changes needed are in admin and edit routes.
+# --- TMDB API Helper Function (অপরিবর্তিত) ---
+def get_tmdb_details(tmdb_id, media_type):
+    if not TMDB_API_KEY: return None
+    search_type = "tv" if media_type == "series" else "movie"
+    try:
+        detail_url = f"https://api.themoviedb.org/3/{search_type}/{tmdb_id}?api_key={TMDB_API_KEY}"
+        res = requests.get(detail_url, timeout=10)
+        res.raise_for_status()
+        data = res.json()
+        details = { "tmdb_id": tmdb_id, "title": data.get("title") or data.get("name"), "poster": f"https://image.tmdb.org/t/p/w500{data.get('poster_path')}" if data.get('poster_path') else None, "backdrop": f"https://image.tmdb.org/t/p/w1280{data.get('backdrop_path')}" if data.get('backdrop_path') else None, "overview": data.get("overview"), "release_date": data.get("release_date") or data.get("first_air_date"), "genres": [g['name'] for g in data.get("genres", [])], "vote_average": data.get("vote_average"), "type": "series" if search_type == "tv" else "movie" }
+        return details
+    except requests.RequestException as e:
+        print(f"ERROR: TMDb API request failed: {e}")
+        return None
+
+# --- Pagination Helper Class ---
+class Pagination:
+    def __init__(self, page, per_page, total_count):
+        self.page = page
+        self.per_page = per_page
+        self.total_count = total_count
+    @property
+    def total_pages(self): return math.ceil(self.total_count / self.per_page)
+    @property
+    def has_prev(self): return self.page > 1
+    @property
+    def has_next(self): return self.page < self.total_pages
+    @property
+    def prev_num(self): return self.page - 1
+    @property
+    def next_num(self): return self.page + 1
+
+# --- Flask Routes ---
+@app.route('/')
+def home():
+    query = request.args.get('q', '').strip()
+    if query:
+        movies_list = list(movies.find({"title": {"$regex": query, "$options": "i"}}).sort('updated_at', -1))
+        total_results = movies.count_documents({"title": {"$regex": query, "$options": "i"}})
+        pagination = Pagination(1, ITEMS_PER_PAGE, total_results)
+        return render_template_string(index_html, movies=movies_list, query=f'Results for "{query}"', is_full_page_list=True, pagination=pagination)
+
+    slider_content = list(movies.find({}).sort('updated_at', -1).limit(10))
+    latest_content = list(movies.find({}).sort('updated_at', -1).limit(10))
+    
+    home_categories = [cat['name'] for cat in categories_collection.find().sort("name", 1)]
+    categorized_content = {cat: list(movies.find({"categories": cat}).sort('updated_at', -1).limit(10)) for cat in home_categories}
+    
+    categorized_content = {k: v for k, v in categorized_content.items() if v}
+
+    context = {
+        "slider_content": slider_content, "latest_content": latest_content,
+        "categorized_content": categorized_content, "is_full_page_list": False
+    }
+    return render_template_string(index_html, **context)
+
+@app.route('/movie/<movie_id>')
+def movie_detail(movie_id):
+    try:
+        movie = movies.find_one_and_update(
+            {"_id": ObjectId(movie_id)},
+            {"$inc": {"view_count": 1}},
+            return_document=True
+        )
+        if not movie: 
+            return "Content not found", 404
+        related_content = list(movies.find({"type": movie.get('type'), "_id": {"$ne": movie['_id']}}).sort('updated_at', -1).limit(10))
+        return render_template_string(detail_html, movie=movie, related_content=related_content)
+    except Exception as e:
+        print(f"Error in movie_detail: {e}")
+        return "Content not found", 404
+
+# ... (All other public routes like /movies, /series, etc., are the same as your original code)
 
 @app.route('/admin', methods=["GET", "POST"])
 @requires_auth
@@ -810,19 +1081,19 @@ def admin():
     if request.method == "POST":
         form_action = request.form.get("form_action")
         
-        # ... Other form actions from your code (update_ads, add_category, etc.)
+        # ... (All other form actions from your code are correct)
         
         if form_action == "add_content":
-            # All core detail fetching is the same as your code
+            # [MODIFIED PART]
+            # Core details logic is the same as your original code
             movie_data = {
                 "title": request.form.get("title").strip(),
                 "type": request.form.get("content_type", "movie"),
-                # ... etc
+                # ... etc.
+                "links": [], "episodes": [], "season_packs": [], "manual_links": []
             }
 
-            # [MODIFIED PART]
             if movie_data["type"] == "movie":
-                movie_data["links"] = []
                 for q in ["480p", "720p", "1080p", "BLU-RAY"]:
                     watch_url = request.form.get(f"watch_link_{q}")
                     download_url = request.form.get(f"download_link_{q}")
@@ -833,10 +1104,13 @@ def admin():
                             "download_url": download_url.strip() if download_url else None
                         })
             else: # Series
-                # ... (Logic for episodes and season packs is the same as your code)
-                pass
+                sp_nums, sp_w, sp_d = request.form.getlist('season_pack_number[]'), request.form.getlist('season_pack_watch_link[]'), request.form.getlist('season_pack_download_link[]')
+                movie_data['season_packs'] = [{"season_number": int(sp_nums[i]), "watch_link": sp_w[i].strip() or None, "download_link": sp_d[i].strip() or None} for i in range(len(sp_nums)) if sp_nums[i]]
+                s, n, t, l = request.form.getlist('episode_season[]'), request.form.getlist('episode_number[]'), request.form.getlist('episode_title[]'), request.form.getlist('episode_watch_link[]')
+                movie_data['episodes'] = [{"season": int(s[i]), "episode_number": int(n[i]), "title": t[i].strip(), "watch_link": l[i].strip()} for i in range(len(s)) if s[i] and n[i] and l[i]]
+
+            # ... (Rest of your original logic for DB insert, notifications, etc.)
             
-            # ... (Rest of the logic: manual links, DB insert, notification)
         return redirect(url_for('admin'))
     
     # GET request logic is the same as your original code
@@ -845,9 +1119,11 @@ def admin():
 @app.route('/edit_movie/<movie_id>', methods=["GET", "POST"])
 @requires_auth
 def edit_movie(movie_id):
-    # ... GET request logic is the same
+    # ... (GET logic is the same)
+    
     if request.method == "POST":
-        # ... Core details update logic is the same
+        # ... (Core details update is the same)
+        update_data = {}
         
         # [MODIFIED PART]
         if request.form.get("content_type") == "movie":
@@ -862,16 +1138,18 @@ def edit_movie(movie_id):
                         "download_url": download_url.strip() if download_url else None
                     })
         else: # Series
-            # ... (Series update logic is the same as your code)
+            # ... (Series update logic is the same as your original code)
             pass
 
-        # ... (Rest of the logic: update DB, notification)
+        # ... (Rest of your original update logic)
+        
         return redirect(url_for('admin'))
     
     return render_template_string(edit_html, ...)
 
-# --- All other routes and API endpoints from your original code ---
+# --- All other API endpoints and routes from your original code ---
 # ...
+
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 3000))
     app.run(debug=True, host='0.0.0.0', port=port)
