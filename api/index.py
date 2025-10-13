@@ -12,10 +12,10 @@ import math
 import re  # <-- এই মডিউলটি সার্চ ফাংশন এবং নতুন জি-ড্রাইভ ফাংশনের জন্য প্রয়োজন
 
 # --- Environment Variables ---
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://mewayo8672:mewayo8672@cluster0.ozhvczp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+MONGO_URI = os.environ.get("MONGO_URI", "mongodb+srv://Demo270:Demo270@cluster0.ls1igsg.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 TMDB_API_KEY = os.environ.get("TMDB_API_KEY", "7dc544d9253bccc3cfecc1c677f69819")
-ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "Nahid421")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Nahid421")
+ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "Nahid270")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Nahid270")
 WEBSITE_NAME = os.environ.get("WEBSITE_NAME", "FreeMovieHub")
 DEVELOPER_TELEGRAM_ID = os.environ.get("DEVELOPER_TELEGRAM_ID", "https://t.me/AllBotUpdatemy")
 
