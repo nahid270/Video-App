@@ -7,13 +7,19 @@ from datetime import datetime
 from urllib.parse import quote
 
 # =================================================================
-# ১. কনফিগারেশন এবং এনভায়রনমেন্ট ভেরিয়েবলস
+# ১. কনফিগারেশন: আপনার তথ্য এখানে বসান
 # =================================================================
 
-# Vercel বা লোকাল পরিবেশ থেকে লোড হবে
-MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/eonmovies')
-TMDB_API_KEY = os.environ.get('TMDB_API_KEY', 'YOUR_TMDB_API_KEY')
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_TELEGRAM_BOT_TOKEN')
+# --- এখানে আপনার নিজস্ব গোপন তথ্য বসান ---
+MONGO_URI = 'mongodb+srv://mewayo8672:mewayo8672@cluster0.ozhvczp.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0' 
+# উদাহরণ: 'mongodb+srv://user:password@cluster0.abcde.mongodb.net/?retryWrites=true&w=majority'
+
+TMDB_API_KEY = '7dc544d9253bccc3cfecc1c677f69819' 
+# উদাহরণ: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'
+
+TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+# উদাহরণ: '123456:AABBCCDD_your_bot_token_example'
+# ----------------------------------------
 
 TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500'
 
@@ -28,7 +34,7 @@ try:
     movies_collection.create_index([('slug', 1)], unique=True)
 except Exception as e:
     print(f"Database connection error: {e}")
-    # Local fallback for testing if MongoDB is not running
+    # যদি DB কানেক্ট না হয়, তাহলে অ্যাপ রান হবে না বা শুধু স্ট্যাটিক কন্টেন্ট দেখাবে
 
 # =================================================================
 # ৩. সাহায্যকারী ফাংশন ও HTML টেমপ্লেট
@@ -43,8 +49,7 @@ def create_slug(title, tmdb_id):
 
 def get_download_link(file_id):
     """টেলিগ্রাম ফাইল ডাউনলোড লিঙ্ক তৈরি করে।"""
-    # Note: For security and simplicity, we generally redirect to the telegram post
-    # or use a direct file access link if the bot grants it.
+    # এই লিংকটি ব্যবহারকারীকে সরাসরি ফাইল ডাউনলোডের জন্য ট্রিগার করবে
     return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
 
 
@@ -60,8 +65,10 @@ GLOBAL_STYLE = """
         .movie-card a { text-decoration: none; color: inherit; }
         .movie-card img { width: 100%; height: 300px; object-fit: cover; }
         
+        /* ট্যাগ স্টাইল */
         .tag { position: absolute; top: 10px; left: 10px; background-color: #ff9800; color: #1a1a1a; padding: 4px 8px; border-radius: 4px; font-size: 0.8em; font-weight: bold; }
         .series-tag { background-color: #e91e63; }
+        
         .movie-card-info { padding: 10px; text-align: center; }
         .movie-card-info h3 { font-size: 1em; margin: 5px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -81,7 +88,7 @@ HEADER_HTML = f"""
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Eon Movies Serverless Clone</title>
+    <title>Eon Movies Clone</title>
     {GLOBAL_STYLE}
 </head>
 <body>
@@ -116,37 +123,36 @@ def telegram_webhook():
         caption = update['channel_post'].get('caption', '')
         file_id = update['channel_post']['document']['file_id']
         
-        # ১. টাইটেল এক্সট্রাকশন
-        # আমরা ক্যাপশন থেকে মুভি টাইটেল এবং টাইপ (#MOVIE/#SERIES) বের করার চেষ্টা করব
+        # ১. টাইটেল এক্সট্রাকশন ও টাইপ সনাক্তকরণ (#MOVIE বা #SERIES ট্যাগ ব্যবহার করে)
         search_title = caption.strip().split('\n')[0]
-        content_type = 'Movie' # Default type
+        content_type = 'Movie' # Default
         
+        # ট্যাগ দেখে টাইপ নির্ধারণ
         if "#SERIES" in caption.upper():
             content_type = 'Web Series'
         elif "#MOVIE" in caption.upper():
             content_type = 'Movie'
             
         if not search_title:
-            return jsonify({'status': 'error', 'message': 'No title in caption'}), 200
+            return jsonify({'status': 'error', 'message': 'No title found in caption'}), 200
 
-        # ২. TMDB সার্চ (Movie/TV উভয় সার্চ করা হচ্ছে)
-        # যেহেতু আমরা TMDB-তে সরাসরি মুভি নাকি সিরিজ আপলোড হয়েছে তা জানতে পারছি না,
-        # তাই আমরা একটি ফ্লেক্সিবল সার্চ করব বা প্রথমে মুভি সার্চ করব।
+        # ২. TMDB সার্চ লজিক
+        tmdb_path = 'tv' if content_type == 'Web Series' else 'movie'
         
-        is_tv = content_type == 'Web Series'
-        tmdb_path = 'tv' if is_tv else 'movie'
-        
+        # প্রথমে নির্ধারিত টাইপে সার্চ করা
         tmdb_url = f"https://api.themoviedb.org/3/search/{tmdb_path}?api_key={TMDB_API_KEY}&query={quote(search_title)}"
         tmdb_response = requests.get(tmdb_url)
         
-        if tmdb_response.status_code != 200 or not tmdb_response.json().get('results'):
-            # যদি প্রথম সার্চে না পাওয়া যায়, তবে অপর টাইপে সার্চ করে দেখা যেতে পারে (ফলব্যাক)
-            tmdb_path = 'movie' if is_tv else 'tv'
-            tmdb_url = f"https://api.themoviedb.org/3/search/{tmdb_path}?api_key={TMDB_API_KEY}&query={quote(search_title)}"
-            tmdb_response = requests.get(tmdb_url)
-            content_type = 'Movie' if tmdb_path == 'movie' else 'Web Series'
-
         tmdb_data = tmdb_response.json().get('results')
+        
+        # যদি প্রথম সার্চে ডেটা না পাওয়া যায়, তবে অন্য টাইপে ফলব্যাক সার্চ
+        if not tmdb_data and content_type == 'Movie':
+             tmdb_path = 'tv'
+             tmdb_url = f"https://api.themoviedb.org/3/search/{tmdb_path}?api_key={TMDB_API_KEY}&query={quote(search_title)}"
+             tmdb_response = requests.get(tmdb_url)
+             tmdb_data = tmdb_response.json().get('results')
+             if tmdb_data: content_type = 'Web Series'
+        
         if not tmdb_data:
             return jsonify({'status': 'error', 'message': 'Content not found on TMDB'}), 200
         
@@ -174,7 +180,6 @@ def telegram_webhook():
             upsert=True
         )
 
-        # সাধারণত Vercel/ISR সিস্টেমে এখানে রিভ্যালিডেশন হয়, ফ্লাস্ক স্ট্যাটিক নয়, তাই ইনস্ট্যান্ট আপডেটের জন্য ব্রাউজার রিফ্রেশ দরকার হবে।
         return jsonify({'status': 'success', 'movie': title, 'type': content_type, 'slug': slug}), 200
 
     except Exception as e:
@@ -200,6 +205,7 @@ def homepage():
             for movie in movies:
                 poster_url = f"{TMDB_IMAGE_BASE_URL}{movie.get('poster_path')}" if movie.get('poster_path') else 'https://via.placeholder.com/500x750?text=No+Image'
                 
+                # মুভি ট্যাগের জন্য ক্লাস
                 tag_class = 'series-tag' if movie.get('content_type') == 'Web Series' else ''
                 
                 card = f"""
@@ -220,7 +226,7 @@ def homepage():
         return Response(HEADER_HTML + content + FOOTER_HTML, mimetype='text/html')
 
     except Exception as e:
-        return Response(HEADER_HTML + f"<h1>Error</h1><p>{e}</p>" + FOOTER_HTML, mimetype='text/html'), 500
+        return Response(HEADER_HTML + f"<h1>Error</h1><p>Could not load content: {e}</p>" + FOOTER_HTML, mimetype='text/html'), 500
 
 
 @app.route('/t/<slug>')
@@ -234,8 +240,6 @@ def movie_detail(slug):
             return Response(HEADER_HTML + content + FOOTER_HTML, mimetype='text/html'), 404
 
         poster_url = f"{TMDB_IMAGE_BASE_URL}{movie.get('poster_path')}" if movie.get('poster_path') else 'https://via.placeholder.com/500x750?text=No+Image'
-        
-        # টেলিগ্রামের getFile endpoint কল না করে, সরাসরি ব্যবহারকারীকে ডাউনলোড করার জন্য তৈরি করা লিঙ্ক
         download_link = get_download_link(movie.get('telegram_file_id'))
         
         content = f"""
@@ -262,7 +266,7 @@ def movie_detail(slug):
         return Response(HEADER_HTML + content + FOOTER_HTML, mimetype='text/html')
 
     except Exception as e:
-        return Response(HEADER_HTML + f"<h1>Error</h1><p>{e}</p>" + FOOTER_HTML, mimetype='text/html'), 500
+        return Response(HEADER_HTML + f"<h1>Error</h1><p>Detail page error: {e}</p>" + FOOTER_HTML, mimetype='text/html'), 500
 
 
 # =================================================================
@@ -270,8 +274,4 @@ def movie_detail(slug):
 # =================================================================
 
 if __name__ == '__main__':
-    # লোকাল ডেভেলপমেন্টের জন্য
     app.run(debug=True, port=5000)
-
-# Vercel ডিপ্লয়মেন্টের জন্য (Vercel-এ পাইথন অ্যাপ ডিপ্লয় করলে এটি এন্ট্রি পয়েন্ট হয়)
-# from index import app
