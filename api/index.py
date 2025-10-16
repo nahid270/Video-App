@@ -1,6 +1,7 @@
 import os
 import requests
 import json
+import re # রেগুলার এক্সপ্রেশন ব্যবহারের জন্য
 from flask import Flask, request, jsonify, Response, redirect, url_for
 from pymongo import MongoClient
 from datetime import datetime
@@ -15,24 +16,26 @@ MONGO_URI = 'mongodb+srv://mewayo8672:mewayo8672@cluster0.ozhvczp.mongodb.net/?r
 TMDB_API_KEY = '7dc544d9253bccc3cfecc1c677f69819' 
 TELEGRAM_BOT_TOKEN = '7769138300:AAE0qSFNOoQQxXsD7qtWuumHMgTkmAon3X8'
 
-# --- আপনার অ্যাডমিন চ্যানেলের ID (এটি -100 দিয়ে শুরু হবে) ---
-# এটি বসানো বাধ্যতামূলক, তা না হলে কোড ডেটা গ্রহণ করবে না।
-TELEGRAM_CHANNEL_ID = -1002878014870 # <-- এখানে আপনার সঠিক প্রাইভেট চ্যানেল আইডি বসান
+# --- আপনার অ্যাডমিন চ্যানেলের ID ---
+# এখানে আপনার সংখ্যাভিত্তিক প্রাইভেট চ্যানেল আইডি (-100...) বসান
+TELEGRAM_CHANNEL_ID = -1002878014870 # <-- CHANGE THIS to your actual private channel ID
 # -------------------------------------------------------------
 
 TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500'
 
 # =================================================================
-# ২. ডাটাবেস সংযোগ
+# ২. ডাটাবেস সংযোগ (ত্রুটি হ্যান্ডলিং সহ)
 # =================================================================
 
+client = None
+movies_collection = None
 try:
     client = MongoClient(MONGO_URI)
     db = client.get_database('eonmovies_db')
     movies_collection = db.get_collection('movies')
     movies_collection.create_index([('slug', 1)], unique=True)
 except Exception as e:
-    print(f"Database connection error: {e}")
+    print(f"FATAL: Database connection error. Check MONGO_URI. Error: {e}")
 
 # =================================================================
 # ৩. সাহায্যকারী ফাংশন ও HTML টেমপ্লেট
@@ -47,7 +50,7 @@ def create_slug(title, tmdb_id):
 def get_download_link(file_id):
     return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
 
-# --- আধুনিক UI/UX এর জন্য CSS (অপরিবর্তিত) ---
+# --- UI/UX স্টাইল (অপরিবর্তিত) ---
 GLOBAL_STYLE = """
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d0d0d; color: #FFFFFF; margin: 0; padding: 0; }
@@ -104,6 +107,9 @@ app = Flask(__name__)
 @app.route('/api/telegram-webhook', methods=['POST'])
 def telegram_webhook():
     """টেলিগ্রাম থেকে নতুন মুভি/সিরিজ পোস্ট ডেটা প্রক্রিয়া করে।"""
+    if movies_collection is None:
+        return jsonify({'status': 'error', 'message': 'Database not connected'}), 500
+        
     try:
         update = request.get_json()
         
@@ -115,20 +121,27 @@ def telegram_webhook():
         # --- ১. চ্যানেল আইডি চেক (নিখুঁত ফিল্টার) ---
         chat_id_from_post = post['chat']['id']
 
-        if str(chat_id_from_post) != str(TELEGRAM_CHANNEL_ID):
-             # যদি অন্য কোনো চ্যানেল থেকে আসে, তাহলে ইগনোর করো
+        # ID গুলি পূর্ণসংখ্যা (Integer) হিসেবে তুলনামূলকভাবে সুরক্ষিত
+        if int(chat_id_from_post) != int(TELEGRAM_CHANNEL_ID):
              return jsonify({'status': 'ignored', 'message': f'Post from unauthorized channel: {chat_id_from_post}'}), 200
 
-        # ডকুমেন্ট এবং ক্যাপশন আছে কিনা চেক
+        # ডকুমেন্ট এবং ক্যাপশন আছে কিনা চেক (যেহেতু Document হিসেবে আপলোড করার কথা)
         if not post.get('document') or not post.get('caption'):
+            # Vercel লগসে দেখা যাবে এই রিকোয়েস্টটি এসেছে, কিন্তু ইগনোর হয়েছে
+            print("Webhook received, but missing file or caption.")
             return jsonify({'status': 'ok', 'message': 'Post is not a file or missing caption'}), 200
         
         caption = post.get('caption', '')
         file_id = post['document']['file_id']
         
-        # ২. টাইটেল এক্সট্রাকশন ও টাইপ সনাক্তকরণ
-        # এখানে স্পেস বা নতুন লাইন বাদ দিয়ে শুধু প্রথম লাইনটিকে টাইটেল হিসেবে ধরা হচ্ছে
-        search_title = caption.strip().split('\n')[0].strip()
+        # ২. টাইটেল এক্সট্রাকশন ও টাইপ সনাক্তকরণ (উন্নত লজিক)
+        
+        # ক্যাপশনের প্রথম অংশ থেকে অপ্রয়োজনীয় শব্দ (যেমন 720p, Dual Audio) বাদ দিয়ে শুধু মুভির নাম বের করার চেষ্টা
+        raw_title = caption.strip().split('\n')[0].strip()
+        # টাইটেল থেকে বছর, রেজোলিউশন বা ট্যাগগুলো বাদ দেওয়া
+        search_title_match = re.search(r'([\w\s\'\.\-&]+)\s*(\d{4})?', raw_title, re.IGNORECASE)
+        search_title = (search_title_match.group(1).strip() if search_title_match else raw_title).replace('.', ' ')
+        
         content_type = 'Movie' 
         
         if "#SERIES" in caption.upper():
@@ -136,8 +149,8 @@ def telegram_webhook():
         elif "#MOVIE" in caption.upper():
             content_type = 'Movie'
             
-        if not search_title:
-            return jsonify({'status': 'error', 'message': 'No title found in caption'}), 200
+        if not search_title or len(search_title) < 2:
+            return jsonify({'status': 'error', 'message': 'No robust title found for search'}), 200
 
         # ৩. TMDB সার্চ লজিক
         tmdb_path = 'tv' if content_type == 'Web Series' else 'movie'
@@ -145,7 +158,7 @@ def telegram_webhook():
         tmdb_response = requests.get(tmdb_url)
         tmdb_data = tmdb_response.json().get('results')
         
-        # ফলব্যাক সার্চ
+        # ফলব্যাক সার্চ (যদি প্রথম সার্চে না পাওয়া যায়)
         if not tmdb_data:
              tmdb_path_fallback = 'movie' if tmdb_path == 'tv' else 'tv'
              tmdb_url_fallback = f"https://api.themoviedb.org/3/search/{tmdb_path_fallback}?api_key={TMDB_API_KEY}&query={quote(search_title)}"
@@ -154,7 +167,7 @@ def telegram_webhook():
              if tmdb_data: content_type = 'Movie' if tmdb_path_fallback == 'movie' else 'Web Series'
         
         if not tmdb_data:
-            return jsonify({'status': 'error', 'message': 'Content not found on TMDB'}), 200
+            return jsonify({'status': 'error', 'message': f'Content "{search_title}" not found on TMDB'}), 200
         
         movie_data = tmdb_data[0]
         
@@ -170,7 +183,7 @@ def telegram_webhook():
             'overview': movie_data.get('overview'),
             'poster_path': movie_data.get('poster_path'),
             'release_year': release_date.split('-')[0] if release_date else 'N/A',
-            'original_language': movie_data.get('original_language', 'N/A'),
+            'original_language': movie_data.get('original_language', 'N/A').upper(), # ভাষা বড় হাতের অক্ষরে
             'telegram_file_id': file_id,
             'slug': slug,
             'uploaded_at': datetime.now()
@@ -181,23 +194,25 @@ def telegram_webhook():
             {'$set': movie_doc}, 
             upsert=True
         )
-
+        
+        print(f"SUCCESS: Movie saved - {title}")
         return jsonify({'status': 'success', 'movie': title, 'type': content_type, 'slug': slug}), 200
 
     except Exception as e:
-        print(f"Webhook Error: {e}")
+        print(f"CRITICAL WEBHOOK ERROR: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 # =================================================================
-# ৬. ফ্রন্টএন্ড রুটস
+# ৬. ফ্রন্টএন্ড রুটস (অপরিবর্তিত)
 # =================================================================
 
 @app.route('/')
 def homepage():
-    # ... (অপরিবর্তিত, শুধু নতুন ডেটা প্রদর্শন করে) ...
+    if movies_collection is None:
+         return Response(HEADER_HTML + "<h1>Error</h1><p>Database connection failed.</p>" + FOOTER_HTML, mimetype='text/html'), 500
+         
     try:
         movies = list(movies_collection.find().sort('uploaded_at', -1).limit(40))
-        
         content = "<h1>🎬 Latest Uploads</h1>"
         content += '<div class="movie-grid">'
         
@@ -222,7 +237,6 @@ def homepage():
                 content += card
         
         content += '</div>'
-        
         return Response(HEADER_HTML + content + FOOTER_HTML, mimetype='text/html')
 
     except Exception as e:
@@ -231,7 +245,9 @@ def homepage():
 
 @app.route('/t/<slug>')
 def movie_detail(slug):
-    """মুভি ডিটেইল পেজ রেন্ডার করে (রিলিজ ইয়ার এবং ভাষা সহ)।"""
+    if movies_collection is None:
+        return Response(HEADER_HTML + "<h1>Error</h1><p>Database connection failed.</p>" + FOOTER_HTML, mimetype='text/html'), 500
+        
     try:
         movie = movies_collection.find_one({'slug': slug})
         
@@ -254,7 +270,7 @@ def movie_detail(slug):
                     <div class="detail-meta">
                         <p><strong>Type:</strong> {movie['content_type']}</p>
                         <p><strong>Release Year:</strong> {movie.get('release_year', 'N/A')}</p>
-                        <p><strong>Original Language:</strong> {movie.get('original_language', 'N/A').upper()}</p>
+                        <p><strong>Original Language:</strong> {movie.get('original_language', 'N/A')}</p>
                     </div>
                     
                     <h3>Overview:</h3>
