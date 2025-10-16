@@ -17,7 +17,7 @@ MONGO_URI = 'mongodb+srv://mewayo8672:mewayo8672@cluster0.ozhvczp.mongodb.net/?r
 TMDB_API_KEY = '7dc544d9253bccc3cfecc1c677f69819' 
 # উদাহরণ: 'a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6'
 
-TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+TELEGRAM_BOT_TOKEN = '7769138300:AAE0qSFNOoQQxXsD7qtWuumHMgTkmAon3X8'
 # উদাহরণ: '123456:AABBCCDD_your_bot_token_example'
 # ----------------------------------------
 
